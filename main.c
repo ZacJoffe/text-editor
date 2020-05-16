@@ -34,6 +34,7 @@ struct editorConfig {
     int cx;
     int cy;
     int rowoffset;
+    int coloffset;
     int screenrows;
     int screencols;
     int numrows;
@@ -270,12 +271,21 @@ void abFree(struct abuf *ab) {
 // output
 
 void editorScroll() {
+    // vertical scroll
     if (E.cy < E.rowoffset) {
         E.rowoffset = E.cy;
     }
 
     if (E.cy >= E.rowoffset + E.screenrows) {
         E.rowoffset = E.cy - E.screenrows + 1;
+    }
+
+    // horizontal scroll
+    if (E.cx < E.coloffset) {
+        E.coloffset = E.cx;
+    }
+    if (E.cx >= E.coloffset + E.screencols) {
+        E.coloffset = E.cx - E.screencols + 1;
     }
 }
 
@@ -284,12 +294,16 @@ void editorDrawRows(struct abuf *ab) {
         if (y + E.rowoffset >= E.numrows) {
             abAppend(ab, "~", 1);
         } else {
-            int len = E.row[y + E.rowoffset].size;
+            int len = E.row[y + E.rowoffset].size - E.coloffset;
+            if (len < 0) {
+                len = 0;
+            }
+
             if (len > E.screencols) {
                 len = E.screencols;
             }
 
-            abAppend(ab, E.row[y + E.rowoffset].chars, len);
+            abAppend(ab, &E.row[y + E.rowoffset].chars[E.coloffset], len);
         }
 
         abAppend(ab, "\x1b[K", 3);
@@ -311,7 +325,8 @@ void editorRefreshScreen() {
     editorDrawRows(&ab);
 
     char buf[32];
-    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoffset) + 1, E.cx + 1);
+    // adjust for scrolling and cursor movement
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoffset) + 1, (E.cx - E.coloffset) + 1);
     abAppend(&ab, buf, strlen(buf));
 
     abAppend(&ab, "\x1b[?25h", 6);
@@ -323,27 +338,57 @@ void editorRefreshScreen() {
 // input
 
 void editorMoveCursor(int key) {
+    struct editorRow *row = NULL;
+
+    // check if cursor is on an actual line
+    if (E.cy < E.numrows) {
+        row = &E.row[E.cy];
+    }
+
     switch (key) {
         case ARROW_LEFT:
             if (E.cx != 0) {
-                E.cx--;
+                --E.cx;
+            } else if (E.cy > 0) {
+                // wrap to end of previous line
+                --E.cy;
+                E.cx = E.row[E.cy].size;
             }
             break;
         case ARROW_RIGHT:
-            if (E.cx != E.screencols - 1) {
-                E.cx++;
+            // check if cx is left to the end of the row
+            if (row && E.cx < row->size) {
+                ++E.cx;
+            } else if (row && E.cx == row->size) {
+                // wrap to beginning of next line
+                ++E.cy;
+                E.cx = 0;
             }
             break;
         case ARROW_UP:
             if (E.cy != 0) {
-                E.cy--;
+                --E.cy;
             }
             break;
         case ARROW_DOWN:
             if (E.cy < E.numrows) {
-                E.cy++;
+                ++E.cy;
             }
             break;
+    }
+
+    // correct cx if it was placed beyond its line
+    row = NULL;
+    if (E.cy < E.numrows) {
+        row = &E.row[E.cy];
+    }
+    int rowlength = 0;
+    if (row) {
+        rowlength = row->size;
+    }
+
+    if (E.cx > rowlength) {
+        E.cx = rowlength;
     }
 }
 
@@ -393,6 +438,7 @@ void initEditor() {
     E.cx = 0;
     E.cy = 0;
     E.rowoffset = 0;
+    E.coloffset = 0;
     E.numrows = 0;
     E.row = NULL;
 
