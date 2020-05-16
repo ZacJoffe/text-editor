@@ -33,6 +33,7 @@ struct editorRow {
 struct editorConfig {
     int cx;
     int cy;
+    int rowoffset;
     int screenrows;
     int screencols;
     int numrows;
@@ -268,15 +269,25 @@ void abFree(struct abuf *ab) {
 
 // output
 
+void editorScroll() {
+    if (E.cy < E.rowoffset) {
+        E.rowoffset = E.cy;
+    }
+
+    if (E.cy >= E.rowoffset + E.screenrows) {
+        E.rowoffset = E.cy - E.screenrows + 1;
+    }
+}
+
 void editorDrawRows(struct abuf *ab) {
     for (int y = 0; y < E.screenrows; ++y) {
-        if (y < E.numrows) {
-            int len = E.row[y].size;
+        if (y + E.rowoffset < E.numrows) {
+            int len = E.row[y + E.rowoffset].size;
             if (len > E.screencols) {
                 len = E.screencols;
             }
 
-            abAppend(ab, E.row[y].chars, len);
+            abAppend(ab, E.row[y + E.rowoffset].chars, len);
         }
 
         abAppend(ab, "~", 1);
@@ -289,6 +300,8 @@ void editorDrawRows(struct abuf *ab) {
 }
 
 void editorRefreshScreen() {
+    editorScroll();
+
     struct abuf ab = ABUF_INIT;
 
     abAppend(&ab, "\x1b[?25l", 6);
@@ -326,7 +339,7 @@ void editorMoveCursor(int key) {
             }
             break;
         case ARROW_DOWN:
-            if (E.cy != E.screenrows - 1) {
+            if (E.cy < E.numrows) {
                 E.cy++;
             }
             break;
@@ -378,6 +391,7 @@ char editorProcessKeypress() {
 void initEditor() {
     E.cx = 0;
     E.cy = 0;
+    E.rowoffset = 0;
     E.numrows = 0;
     E.row = NULL;
 
