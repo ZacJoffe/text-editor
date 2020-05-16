@@ -281,7 +281,9 @@ void editorScroll() {
 
 void editorDrawRows(struct abuf *ab) {
     for (int y = 0; y < E.screenrows; ++y) {
-        if (y + E.rowoffset < E.numrows) {
+        if (y + E.rowoffset >= E.numrows) {
+            abAppend(ab, "~", 1);
+        } else {
             int len = E.row[y + E.rowoffset].size;
             if (len > E.screencols) {
                 len = E.screencols;
@@ -290,7 +292,6 @@ void editorDrawRows(struct abuf *ab) {
             abAppend(ab, E.row[y + E.rowoffset].chars, len);
         }
 
-        abAppend(ab, "~", 1);
         abAppend(ab, "\x1b[K", 3);
 
         if (y < E.screenrows - 1) {
@@ -310,7 +311,7 @@ void editorRefreshScreen() {
     editorDrawRows(&ab);
 
     char buf[32];
-    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy + 1, E.cx + 1);
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoffset) + 1, E.cx + 1);
     abAppend(&ab, buf, strlen(buf));
 
     abAppend(&ab, "\x1b[?25h", 6);
