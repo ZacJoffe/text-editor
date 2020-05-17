@@ -1,6 +1,7 @@
 // includes
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
@@ -16,6 +17,7 @@
 #define TAB_STOP 8
 
 enum editorKey {
+    BACKSPACE = 127,
     ARROW_LEFT = 1000,
     ARROW_RIGHT,
     ARROW_UP,
@@ -49,6 +51,7 @@ struct editorConfig {
     char statusmsg[80];
     time_t statusmsg_time;
     struct termios orig_termios;
+    int dirty; // buffer modify flag
 };
 
 struct editorConfig E;
@@ -125,7 +128,7 @@ int editorReadKey() {
                             return HOME;
                         case '8':
                             return END;
-                    }     
+                    }
                 }
             } else {
                 switch (seq[1]) {
@@ -141,7 +144,7 @@ int editorReadKey() {
                         return HOME;
                     case 'F':
                         return END;
-                }     
+                }
             }
         } else if (seq[0] == 'O') {
             switch (seq[1]) {
@@ -186,7 +189,6 @@ int getCursorPosition(int *rows, int *cols) {
         return -1;
     }
 
-    
     return 0;
 }
 
@@ -269,6 +271,7 @@ void editorAppendRow(char *s, size_t len) {
     editorUpdateRow(&E.row[i]);
 
     ++E.numrows;
+    E.dirty = 1;
 }
 
 void editorRowInsertChar(struct editorRow *row, int i, int c) {
@@ -281,6 +284,7 @@ void editorRowInsertChar(struct editorRow *row, int i, int c) {
     ++row->size;
     row->chars[i] = c;
     editorUpdateRow(row);
+    E.dirty = 1;
 }
 
 // editor operations
@@ -294,7 +298,39 @@ void editorInsertChar(int c) {
     ++E.cx;
 }
 
+void editorSetStatusMessage(const char *fmt, ...) {
+    // printf style interface for sending messages to text editor
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(E.statusmsg, sizeof(E.statusmsg), fmt, ap);
+    va_end(ap);
+    E.statusmsg_time = time(NULL);
+}
+
 // file i/o
+
+char *editorRowsToString(int *buflen) {
+    // get length of string to malloc
+    int totalLen = 0;
+    for (int i = 0; i < E.numrows; ++i) {
+        totalLen += E.row[i].size + 1;
+    }
+
+    *buflen = totalLen;
+
+    char *buf = malloc(totalLen);
+    char *p = buf;
+
+    // loop through each row, delimit by new lines
+    for (int i = 0; i < E.numrows; ++i) {
+        memcpy(p, E.row[i].chars, E.row[i].size);
+        p += E.row[i].size;
+        *p = '\n';
+        ++p;
+    }
+
+    return buf;
+}
 
 void editorOpen(char *filename) {
     free(E.filename);
@@ -328,6 +364,37 @@ void editorOpen(char *filename) {
     /* ssize_t linelen = 13; */
     free(line);
     fclose(fp);
+    E.dirty = 0;
+}
+
+void editorSave() {
+    if (E.filename == NULL) {
+        return;
+    }
+
+    int len;
+    char *buf = editorRowsToString(&len);
+
+    // overwrite file without potential data loss
+    int fd = open(E.filename, O_RDWR | O_CREAT, 0644);
+    if (fd != -1) {
+        // set filesize to new length
+        if (ftruncate(fd, len) != -1) {
+            if (write(fd, buf, len) == len) {
+                close(fd);
+                free(buf);
+                E.dirty = 0;
+
+                editorSetStatusMessage("%d bytes written to disk", len);
+                return;
+            }
+        }
+
+        close(fd);
+    }
+
+    free(buf);
+    editorSetStatusMessage("Can't save! I/O error: %s", strerror(errno));
 }
 
 // append buffer
@@ -408,7 +475,7 @@ void editorDrawStatusBar(struct abuf *ab) {
     abAppend(ab, "\x1b[7m", 4);
     char status[80];
     char rstatus[80];
-    int len = snprintf(status, sizeof(status), "%.20s - %d lines", E.filename ? E.filename : "[No Name]", E.numrows);
+    int len = snprintf(status, sizeof(status), "%.20s - %d lines %s", E.filename ? E.filename : "[No Name]", E.numrows, E.dirty ? "(modified)" : "");
     int rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d", E.cy + 1, E.numrows);
     if (len > E.screencols) {
         len = E.screencols;
@@ -464,14 +531,7 @@ void editorRefreshScreen() {
     abFree(&ab);
 }
 
-void editorSetStatusMessage(const char *fmt, ...) {
-    // printf style interface for sending messages to text editor
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(E.statusmsg, sizeof(E.statusmsg), fmt, ap);
-    va_end(ap);
-    E.statusmsg_time = time(NULL);
-}
+
 
 // input
 
@@ -534,10 +594,16 @@ char editorProcessKeypress() {
     int c = editorReadKey();
 
     switch (c) {
+        case '\r':
+            // TODO
+            break;
         case CTRL_KEY('q'):
             write(STDOUT_FILENO, "\x1b[2J", 4);
             write(STDOUT_FILENO, "\x1b[H", 3);
             exit(0);
+            break;
+        case CTRL_KEY('s'):
+            editorSave();
             break;
         case HOME:
             E.cx = 0;
@@ -546,6 +612,11 @@ char editorProcessKeypress() {
             if (E.cy < E.numrows) {
                 E.cx = E.row[E.cy].size;
             }
+            break;
+        case BACKSPACE:
+        case CTRL_KEY('h'):
+        case DEL:
+            // TODO
             break;
         case PAGE_UP: {
             E.cy = E.rowoffset;
@@ -576,6 +647,9 @@ char editorProcessKeypress() {
         case ARROW_RIGHT:
             editorMoveCursor(c);
             break;
+        case CTRL_KEY('l'):
+        case '\x1b':
+            break;
         default:
             editorInsertChar(c);
             break;
@@ -595,6 +669,7 @@ void initEditor() {
     E.row = NULL;
     E.statusmsg[0] = '\0';
     E.statusmsg_time = 0;
+    E.dirty = 0;
 
     if (getWindowSize(&E.screenrows, &E.screencols) == -1) {
         die("getWindowSize");
@@ -610,7 +685,7 @@ int main(int argc, char *argv[]) {
         editorOpen(argv[1]);
     }
 
-    editorSetStatusMessage("HELP: Ctrl-Q = quit");
+    editorSetStatusMessage("HELP: Ctrl-Q = quit, Ctrl-S = save");
 
     // main event loop
     // continually refresh screen and process inputs
