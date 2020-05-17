@@ -271,6 +271,29 @@ void editorAppendRow(char *s, size_t len) {
     ++E.numrows;
 }
 
+void editorRowInsertChar(struct editorRow *row, int i, int c) {
+    if (i < 0 || i > row->size) {
+        i = row->size;
+    }
+
+    // allocate byte for row->chars
+    memmove(&row->chars[i + 1], &row->chars[i], row->size - i + 1);
+    ++row->size;
+    row->chars[i] = c;
+    editorUpdateRow(row);
+}
+
+// editor operations
+
+void editorInsertChar(int c) {
+    if (E.cy == E.numrows) {
+        editorAppendRow("", 0);
+    }
+
+    editorRowInsertChar(&E.row[E.cy], E.cx, c);
+    ++E.cx;
+}
+
 // file i/o
 
 void editorOpen(char *filename) {
@@ -361,7 +384,7 @@ void editorScroll() {
 void editorDrawRows(struct abuf *ab) {
     for (int y = 0; y < E.screenrows; ++y) {
         if (y + E.rowoffset >= E.numrows) {
-            abAppend(ab, "~", 1);
+            abAppend(ab, "~", 1); // draw tildes for empty lines like vim
         } else {
             // draw row
             int len = E.row[y + E.rowoffset].rsize - E.coloffset;
@@ -377,7 +400,6 @@ void editorDrawRows(struct abuf *ab) {
         }
 
         abAppend(ab, "\x1b[K", 3);
-
         abAppend(ab, "\r\n", 2);
     }
 }
@@ -554,6 +576,9 @@ char editorProcessKeypress() {
         case ARROW_RIGHT:
             editorMoveCursor(c);
             break;
+        default:
+            editorInsertChar(c);
+            break;
     }
 }
 
@@ -587,6 +612,8 @@ int main(int argc, char *argv[]) {
 
     editorSetStatusMessage("HELP: Ctrl-Q = quit");
 
+    // main event loop
+    // continually refresh screen and process inputs
     for (;;) {
         editorRefreshScreen();
         editorProcessKeypress();
