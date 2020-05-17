@@ -236,7 +236,7 @@ void editorUpdateRow(struct editorRow *row) {
         }
     }
 
-    free(row->render);
+    /* free(row->render); */ // TODO fix this
     row->render = malloc(row->size + tabs * (TAB_STOP - 1) + 1);
 
     int i = 0;
