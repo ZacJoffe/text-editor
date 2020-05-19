@@ -15,6 +15,7 @@
 // defines
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define TAB_STOP 8
+#define HIGHLIGHT_NUMBERS (1 << 0)
 
 // prototypes
 void editorRefreshScreen();
@@ -62,10 +63,33 @@ struct editorConfig {
     char statusmsg[80];
     time_t statusmsg_time;
     struct termios orig_termios;
+    struct editorSyntax *syntax;
     int dirty; // buffer modify flag
 };
 
+struct editorSyntax {
+    char *filetype;
+    char **filematch;
+    int flags;
+};
+
+// global instance of editor
 struct editorConfig E;
+
+// filetypes
+
+char *C_HL_extensions[] = { ".c", ".h", ".cpp", NULL };
+
+// highlight database
+struct editorSyntax HLDB[] = {
+    {
+        "c",
+        C_HL_extensions,
+        HIGHLIGHT_NUMBERS
+    },
+};
+
+#define HLDB_ENTRIES (sizeof(HLDB) / sizeof(HLDB[0]))
 
 void die(const char *s) {
     write(STDOUT_FILENO, "\x1b[2J", 4);
@@ -229,18 +253,23 @@ void editorUpdateSyntax(struct editorRow *row) {
     row->highlight = realloc(row->highlight, row->rsize);
     memset(row->highlight, HL_NORMAL, row->rsize);
 
+    if (E.syntax == NULL) {
+        return;
+    }
+
     int prev_sep = 1;
 
     for (int i = 0; i < row->rsize; ++i) {
         char c = row->render[i];
         unsigned char prev_highlight = (i > 0) ? row->highlight[i - 1] : HL_NORMAL;
 
-        if (isdigit(c) && (prev_sep || prev_highlight == HL_NUMBER)) {
-            row->highlight[i] = HL_NUMBER;
-            prev_sep = 0;
-            continue;
+        if (E.syntax->flags && HIGHLIGHT_NUMBERS) {
+            if (isdigit(c) && (prev_sep || prev_highlight == HL_NUMBER) || (c == '.' && prev_highlight == HL_NUMBER)) {
+                row->highlight[i] = HL_NUMBER;
+                prev_sep = 0;
+                continue;
+            }
         }
-
         prev_sep = is_separator(c);
     }
 }
@@ -253,6 +282,34 @@ int editorSyntaxToColor(int highlight) {
             return 34; // foreground blue
         default:
             return 37; // foreground white
+    }
+}
+
+void editorSelectSyntaxHighlight() {
+    E.syntax = NULL;
+    if (E.filename == NULL) {
+        return;
+    }
+
+    char *ext = strrchr(E.filename, '.');
+
+    for (int i = 0; i < HLDB_ENTRIES; ++i) {
+        struct editorSyntax *s = &HLDB[i];
+
+        int j = 0;
+        while (s->filematch[j]) {
+            int is_ext = (s->filematch[j][0] == '.');
+            if ((is_ext && ext && !strcmp(ext, s->filematch[j])) || (!is_ext && strstr(E.filename, s->filematch[j]))) {
+                E.syntax = s;
+
+                for (int filerow = 0; filerow < E.numrows; ++filerow) {
+                    editorUpdateSyntax(&E.row[filerow]);
+                }
+
+                return;
+            }
+            ++j;
+        }
     }
 }
 
@@ -483,6 +540,8 @@ void editorOpen(char *filename) {
     free(E.filename);
     E.filename = strdup(filename);
 
+    editorSelectSyntaxHighlight();
+
     FILE *fp = fopen(filename, "r");
     if (!fp) {
         die("fopen");
@@ -521,6 +580,7 @@ void editorSave() {
             editorSetStatusMessage("Save aborted");
             return;
         }
+        editorSelectSyntaxHighlight();
     }
 
     int len;
@@ -733,7 +793,7 @@ void editorDrawStatusBar(struct abuf *ab) {
     char status[80];
     char rstatus[80];
     int len = snprintf(status, sizeof(status), "%.20s - %d lines %s", E.filename ? E.filename : "[No Name]", E.numrows, E.dirty ? "(modified)" : "");
-    int rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d", E.cy + 1, E.numrows);
+    int rlen = snprintf(rstatus, sizeof(rstatus), "%s | %d/%d", E.syntax ? E.syntax->filetype : "no ft", E.cy + 1, E.numrows);
     if (len > E.screencols) {
         len = E.screencols;
     }
@@ -994,6 +1054,7 @@ void initEditor() {
     E.row = NULL;
     E.statusmsg[0] = '\0';
     E.statusmsg_time = 0;
+    E.syntax = NULL;
     E.dirty = 0;
 
     if (getWindowSize(&E.screenrows, &E.screencols) == -1) {
