@@ -497,7 +497,7 @@ void editorUpdateRow(struct editorRow *row) {
         }
     }
 
-    /* free(row->render); */ // TODO fix this
+    free(row->render);
     row->render = malloc(row->size + tabs * (TAB_STOP - 1) + 1);
 
     int i = 0;
@@ -578,7 +578,7 @@ void editorRowInsertChar(struct editorRow *row, int i, int c) {
     if (i < 0 || i > row->size) {
         i = row->size;
     }
-
+    row->chars = realloc(row->chars, row->size + 2);
     // allocate byte for row->chars
     memmove(&row->chars[i + 1], &row->chars[i], row->size - i + 1);
     ++row->size;
