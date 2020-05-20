@@ -12,12 +12,6 @@
 #include <sys/ioctl.h>
 #include <sys/types.h>
 
-/*
- *
- *test
- *
-*/
-
 // defines
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define TAB_STOP 8
@@ -1186,6 +1180,12 @@ void editorProcessKeypress() {
             }
             break;
         }
+        case CTRL_KEY('p'):
+            editorMoveCursor(ARROW_UP);
+            break;
+        case CTRL_KEY('n'):
+            editorMoveCursor(ARROW_DOWN);
+            break;
         case ARROW_UP:
         case ARROW_DOWN:
         case ARROW_LEFT:
